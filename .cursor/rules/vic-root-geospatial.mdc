@@ -1,0 +1,13 @@
+---
+description: Sedona/geospatial, CRS, validation ranges for soil/tree work
+globs: "**/notebooks/**"
+alwaysApply: false
+---
+
+# VicRoot — geospatial
+
+- **Transform:** Silver layer must project tree points from `source_crs` (default 4326) to `target_crs` (default **7855**) before distance/overlay operations.
+- **Join:** Spatial join trees (points) to soil (polygons); document tolerance/buffer in `docs/architecture.md` if used.
+- **Libraries:** Prefer Apache Sedona in PySpark on Fabric; geopandas acceptable for small dev proofs only—production path is cluster-scale Spark.
+- **Validation:** pH roughly 0–14; flag salinity and missing geometry as quarantine rows, not silent nulls.
+- **Output:** Persist geometry as WKB or well-known functions compatible with downstream Power BI / Databricks consumers.

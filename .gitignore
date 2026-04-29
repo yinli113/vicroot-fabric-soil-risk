@@ -1,0 +1,28 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data / secrets (never commit)
+.env
+.env.local
+*.env
+!.env.example
+secrets/
+data/raw/
+*.csv
+*.parquet
+!config/**/*.json
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

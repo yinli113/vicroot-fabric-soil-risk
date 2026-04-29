@@ -1,0 +1,14 @@
+---
+description: Fabric pipelines, parameters vs variables, idempotency, notebook params
+globs: fabric/**,**/notebooks/**,docs/architecture.md
+alwaysApply: false
+---
+
+# VicRoot — Microsoft Fabric
+
+- **Parameters:** Declare ingestion endpoints, `medallion_root`, `snapshot_date`, CRS codes, environment—see [docs/architecture.md](../../docs/architecture.md).
+- **Variables:** Use for paths built from `utcnow()`, activity outputs, and conditional branches (`Set variable`).
+- **Notebook activities:** Pass the same keys as a structured `params` object; first notebook cell resolves defaults via `notebooks/lib/pipeline_params.py` pattern.
+- **Idempotency:** Read/update `metadata.ingestion_watermarks` (or equivalent) so reruns do not duplicate Bronze facts.
+- **Lookup:** Prefer a small config JSON in Files or a `metadata.datasets` Delta table over duplicating URLs in many activities.
+- **Git:** Prefer Fabric Git integration to Azure DevOps for pipeline/notebook definitions when available.

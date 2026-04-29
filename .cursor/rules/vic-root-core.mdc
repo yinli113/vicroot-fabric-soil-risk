@@ -1,0 +1,13 @@
+---
+description: VicRoot core—blueprint, medallion naming, CRS, no secrets in git
+alwaysApply: true
+---
+
+# VicRoot Insights — core
+
+- **Vision:** [PROMPT.md](../../PROMPT.md) — Melbourne urban forestry; soil stress + weather → risk signals.
+- **Medallion naming:** Delta tables/paths use `bronze_*`, `silver_*`, `gold_*` (or `feature_*` for ML-ready outputs).
+- **CRS:** Tree coords typically **EPSG:4326** ingested; local spatial math **EPSG:7855** (GDA2020 / MGA zone 55 context). Document exceptions in [docs/architecture.md](../../docs/architecture.md).
+- **Parameters first:** Prefer Fabric pipeline **parameters** + **variables** and notebook `params` dict—no workspace-specific IDs hard-coded in business logic.
+- **Secrets:** Never commit API keys or connection strings. Use `.env` locally (see [.env.example](../../.env.example)); use Fabric / Azure Key Vault in production.
+- **Source of truth:** Technical detail in `docs/architecture.md`; session state in `memory-bank/activeContext.md`.

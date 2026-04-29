@@ -1,0 +1,2 @@
+# Local development helpers (Fabric notebooks use workspace PySpark)
+python-dotenv>=1.0.0

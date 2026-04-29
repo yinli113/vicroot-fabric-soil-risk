@@ -1,0 +1,7 @@
+{
+  "soil_ph": { "min": 0, "max": 14 },
+  "salinity_ms_cm": { "min": 0, "max": 50 },
+  "moisture_vwc": { "min": 0, "max": 100 },
+  "temp_c": { "min": -20, "max": 80 },
+  "notes": "Tune bounds per Agriculture Victoria documentation; quarantine out-of-range."
+}

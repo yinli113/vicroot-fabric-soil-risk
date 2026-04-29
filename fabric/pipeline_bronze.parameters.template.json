@@ -1,0 +1,26 @@
+{
+  "pipeline_parameters": {
+    "environment": { "type": "string", "default": "dev" },
+    "medallion_root": { "type": "string", "default": "Files/medallion" },
+    "api_base_url_com": { "type": "string", "default": "https://data.melbourne.vic.gov.au" },
+    "api_base_url_soil": { "type": "string" },
+    "api_base_url_bom": { "type": "string" },
+    "bom_station_id": { "type": "string" },
+    "source_crs": { "type": "string", "default": "EPSG:4326" },
+    "target_crs": { "type": "string", "default": "EPSG:7855" },
+    "snapshot_date": { "type": "string" },
+    "pipeline_run_id": { "type": "string", "default": "@pipeline().RunId" },
+    "bronze_ingest_mode": { "type": "string", "default": "zip_and_files" },
+    "readings_years_csv": { "type": "string", "default": "2023,2024,2025" },
+    "com_page_size": { "type": "int", "default": 100 },
+    "time_window_minutes": { "type": "int", "default": 60 },
+    "resume_from_utc": { "type": "string", "default": "" },
+    "watermark_table": { "type": "string", "default": "metadata.ingestion_watermarks" },
+    "com_dataset_soil_readings": { "type": "string", "default": "soil-sensor-readings-historical-data" },
+    "com_dataset_soil_locations": { "type": "string", "default": "soil-sensor-locations" },
+    "soil_zip_input_path": { "type": "string", "default": "Files/medallion/bronze/Soil Sensor Readings - Historical data (2022).zip" },
+    "soil_zip_filename_slug": { "type": "string", "default": "soil_sensor_readings_historical_2022.zip" },
+    "soil_csv_input_dir": { "type": "string", "default": "Files/medallion/bronze" },
+    "soil_csv_file_pattern": { "type": "string", "default": "soil-sensor-readings-historical-data-{year}.csv" }
+  }
+}

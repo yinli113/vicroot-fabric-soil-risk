@@ -1,0 +1,12 @@
+---
+description: When to summarize vs explore vs generalPurpose; evidence-based debug
+alwaysApply: true
+---
+
+# VicRoot — AI routing (token + quality)
+
+- **Route first:** Classify: doc summary / repo search / implement / debug—then load **one** domain rule + **one** skill.
+- **Cheap & parallel:** Use readonly **explore** subtasks for disjoint file maps or API field extraction; tight prompts, no full blueprint in every subagent.
+- **Deep work:** Use **generalPurpose** for multi-step Fabric pipeline design, Sedona/CRS edge cases, root-cause with logs.
+- **Debug:** Require **evidence** (log snippet path, failing line, parameter snapshot)—hypothesis → minimal repro → single fix.
+- **Memory:** After meaningful changes, add one bullet to `memory-bank/activeContext.md`; keep long specs in `docs/architecture.md` only.
