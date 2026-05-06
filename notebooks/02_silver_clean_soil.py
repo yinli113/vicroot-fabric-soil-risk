@@ -14,7 +14,41 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-NOTEBOOK_VERSION = "v2026-04-28-silver-soil-split-01"
+NOTEBOOK_VERSION = "v2026-05-04-silver-soil-timestamp-schema-aware-02"
+
+
+def _coalesce_bronze_timestamp_string(schema_df: DataFrame) -> F.Column:
+    """Raw timestamp string; only reference columns that exist (Spark resolves every F.col name)."""
+    present = set(schema_df.columns)
+    pieces: List[F.Column] = []
+    for nm in (
+        "local_time",
+        "Local_Time",
+        "date_time",
+        "Date_Time",
+        "DATE_TIME",
+        "reading_time",
+        "timestamp",
+        "reading_timestamp",
+    ):
+        if nm in present:
+            pieces.append(F.col(nm).cast("string"))
+    if "date" in present:
+        if "time" in present:
+            time_e = F.coalesce(F.trim(F.col("time").cast("string")), F.lit("00:00:00"))
+        elif "Time" in present:
+            time_e = F.coalesce(F.trim(F.col("Time").cast("string")), F.lit("00:00:00"))
+        else:
+            time_e = F.lit("00:00:00")
+        date_and_time = F.concat_ws(" ", F.trim(F.col("date").cast("string")), F.trim(time_e))
+        pieces.append(F.when(F.col("date").isNotNull(), date_and_time))
+    if "Date" in present:
+        pieces.append(F.col("Date").cast("string"))
+    if "date" in present:
+        pieces.append(F.col("date").cast("string"))
+    if not pieces:
+        return F.lit(None).cast("string")
+    return F.coalesce(*pieces)
 
 try:
     from notebooks.lib.pipeline_params import resolve_params
@@ -35,7 +69,7 @@ except ModuleNotFoundError:
                 "medallion_root": "Files/medallion",
                 "bronze_soil_root": "Files/medallion/bronze/bronze_soil_readings",
                 "snapshot_date": datetime.now().strftime("%Y-%m-%d"),
-                "readings_years_csv": "2023,2024,2025",
+                "readings_years_csv": "2022,2023,2024,2025",
                 "silver_include_api_source": True,
                 "silver_include_file_source": True,
                 "soil_csv_input_dir": "Files/raw/soil",
@@ -112,7 +146,7 @@ def _dedupe_bronze_records(df: DataFrame) -> DataFrame:
         df.withColumn("_k_site_id", F.coalesce(F.col("site_id"), F.col("Site_ID")).cast("string"))
         .withColumn("_k_probe_id", F.coalesce(F.col("probe_id"), F.col("Probe_ID")).cast("string"))
         .withColumn("_k_probe_measure", F.lower(F.trim(F.coalesce(F.col("probe_measure"), F.col("Probe_Measure")).cast("string"))))
-        .withColumn("_k_local_time", F.coalesce(F.col("local_time"), F.col("Local_Time")).cast("string"))
+        .withColumn("_k_local_time", _coalesce_bronze_timestamp_string(df))
         .withColumn("_k_soil_value", F.trim(F.coalesce(F.col("soil_value"), F.col("Soil_Value")).cast("string")))
         .withColumn(
             "_source_priority",
@@ -134,7 +168,7 @@ print(f"[INFO] notebook_version={NOTEBOOK_VERSION}")
 medallion_root = params.get("medallion_root", "Files/medallion").rstrip("/")
 bronze_soil_root = params.get("bronze_soil_root", f"{medallion_root}/bronze/bronze_soil_readings").rstrip("/")
 snapshot_date = params.get("snapshot_date", "2026-04-28")
-years = _parse_years(params.get("readings_years_csv", "2023,2024,2025"))
+years = _parse_years(params.get("readings_years_csv", "2022,2023,2024,2025"))
 include_api = _parse_bool(params.get("silver_include_api_source", True), True)
 include_file = _parse_bool(params.get("silver_include_file_source", True), True)
 soil_csv_input_dir = params.get("soil_csv_input_dir", "Files/raw/soil").rstrip("/")
@@ -150,17 +184,30 @@ for year in years:
         if df is None:
             filename = soil_csv_file_pattern.format(year=year)
             df = _read_csv_if_exists(spark, f"{bronze_soil_root}/year={year}/raw/file/{filename}")
+        if df is None and "bronze_soil_readings" in bronze_soil_root.replace("\\", "/"):
+            com_base = f"{medallion_root}/bronze/com_soil_sensor_readings"
+            com_jsonl = f"{com_base}/year={year}/raw/records_file.jsonl"
+            df = _read_jsonl_if_exists(spark, com_jsonl)
+            if df is not None:
+                print(f"[INFO] year={year} loaded from combined Bronze path: {com_jsonl}")
+            if df is None:
+                filename = soil_csv_file_pattern.format(year=year)
+                df = _read_csv_if_exists(spark, f"{com_base}/year={year}/raw/file/{filename}")
+                if df is not None:
+                    print(f"[INFO] year={year} loaded CSV from combined Bronze path under raw/file")
         if df is None:
             discovered = _csv_for_year_from_candidates(csv_candidates, year)
             if discovered:
                 df = _read_csv_if_exists(spark, discovered)
         if df is not None:
-            records_dfs.append(df.withColumn("_source_type", F.lit("file")).withColumn("_source_year", F.lit(year)))
+            records_dfs.append(
+                df.withColumn("_source_type", F.lit("file")).withColumn("_source_year", F.lit(int(year)))
+            )
     if include_api:
         p = f"{bronze_soil_root}/year={year}/raw/records_api.jsonl"
         df = _read_jsonl_if_exists(spark, p)
         if df is not None:
-            records_dfs.append(df.withColumn("_source_type", F.lit("api")).withColumn("_source_year", F.lit(year)))
+            records_dfs.append(df.withColumn("_source_type", F.lit("api")).withColumn("_source_year", F.lit(int(year))))
 
 if not records_dfs:
     raise FileNotFoundError("No Bronze soil records found.")
@@ -181,7 +228,7 @@ silver_base_df = (
     .withColumn("soil_value", F.col("soil_value_raw"))
     .withColumn("soil_value_clean", F.trim(F.regexp_replace(F.col("soil_value_raw"), ",", "")))
     .withColumn("soil_value_num", F.regexp_extract(F.col("soil_value_clean"), r"[-+]?[0-9]*\.?[0-9]+", 0).cast("double"))
-    .withColumn("local_time_raw", F.coalesce(F.col("local_time"), F.col("Local_Time")).cast("string"))
+    .withColumn("local_time_raw", _coalesce_bronze_timestamp_string(bronze_records_df))
     .withColumn("local_time_ts", F.to_timestamp("local_time_raw"))
     .withColumn("as_of_date", F.to_date("local_time_ts"))
     .withColumn("snapshot_date", F.lit(snapshot_date))

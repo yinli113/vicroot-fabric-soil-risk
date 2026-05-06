@@ -17,7 +17,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-NOTEBOOK_VERSION = "v2026-04-29-export-site-risk-geojson-01"
+NOTEBOOK_VERSION = "v2026-05-04-export-site-profile-geojson-01"
 
 try:
     from notebooks.lib.pipeline_params import resolve_params
@@ -36,7 +36,8 @@ except ModuleNotFoundError:
     except ModuleNotFoundError:
         def resolve_params(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
             params: Dict[str, Any] = {
-                "gold_irrigation_risk_table": "gold_irrigation_risk_daily",
+                "gold_fact_irrigation_risk_table": "gold_fact_irrigation_risk",
+                "gold_dim_site_table": "gold_dim_site",
                 "geojson_output_path": "Files/raw/map/site_risk.geojson",
                 "geojson_latest_only": True,
                 "geojson_max_features": 50000,
@@ -94,7 +95,11 @@ def _to_lakehouse_abs_path(path_like: str) -> str:
 spark = SparkSession.builder.getOrCreate()
 params = resolve_params({})
 
-gold_irrigation_risk_table = params.get("gold_irrigation_risk_table", "gold_irrigation_risk_daily")
+gold_fact_irrigation_risk_table = params.get(
+    "gold_fact_irrigation_risk_table",
+    params.get("gold_irrigation_risk_table", "gold_fact_irrigation_risk"),
+)
+gold_dim_site_table = params.get("gold_dim_site_table", "gold_dim_site")
 geojson_output_path = params.get("geojson_output_path", "Files/raw/map/site_risk.geojson")
 geojson_latest_only = _parse_bool(params.get("geojson_latest_only", True), True)
 geojson_max_features = int(params.get("geojson_max_features", 50000))
@@ -103,7 +108,8 @@ print(f"[INFO] notebook_version={NOTEBOOK_VERSION}")
 print(
     json.dumps(
         {
-            "gold_irrigation_risk_table": gold_irrigation_risk_table,
+            "gold_fact_irrigation_risk_table": gold_fact_irrigation_risk_table,
+            "gold_dim_site_table": gold_dim_site_table,
             "geojson_output_path": geojson_output_path,
             "geojson_latest_only": geojson_latest_only,
             "geojson_max_features": geojson_max_features,
@@ -112,13 +118,22 @@ print(
     )
 )
 
-risk_df = (
-    spark.table(gold_irrigation_risk_table)
-    .withColumn("latitude", F.col("latitude").cast("double"))
-    .withColumn("longitude", F.col("longitude").cast("double"))
+fact_df = (
+    spark.table(gold_fact_irrigation_risk_table)
     .withColumn("as_of_date", F.to_date(F.col("as_of_date")))
     .withColumn("snapshot_date", F.col("snapshot_date").cast("string"))
-    .filter(F.col("latitude").isNotNull() & F.col("longitude").isNotNull())
+)
+site_df = (
+    spark.table(gold_dim_site_table)
+    .select(
+        F.col("site_id").cast("string").alias("site_id"),
+        F.col("site_name").alias("site_name"),
+        F.col("latitude").cast("double").alias("latitude"),
+        F.col("longitude").cast("double").alias("longitude"),
+    )
+)
+risk_df = fact_df.join(site_df, on="site_id", how="left").filter(
+    F.col("latitude").isNotNull() & F.col("longitude").isNotNull()
 )
 
 if geojson_latest_only:
@@ -134,7 +149,9 @@ if geojson_latest_only:
 row_count = risk_df.count()
 print(f"[INFO] geojson_candidate_rows={row_count}")
 if row_count == 0:
-    raise RuntimeError("No rows with valid latitude/longitude found in Gold risk table.")
+    raise RuntimeError(
+        "No rows with valid latitude/longitude. Run Gold notebook first and ensure gold_dim_site has coordinates."
+    )
 if row_count > geojson_max_features:
     raise RuntimeError(
         f"Row count {row_count} exceeds geojson_max_features={geojson_max_features}. "
@@ -150,16 +167,22 @@ selected_df = risk_df.select(
     "site_name",
     "as_of_date",
     "snapshot_date",
-    "risk_tier",
+    "salinity_risk_tier",
+    "salinity_risk_reason",
+    "salinity_observed_band",
+    "moisture_status",
     "reading_count",
-    "moisture_lt_20",
-    "salinity_lt_20",
-    "salinity_surface_7d_avg",
-    "salinity_surface_30d_avg",
-    "salinity_trend_30d",
-    "rainfall_mm_period",
-    "evap_mm_period",
+    "moisture_shallow_vwc_avg",
+    "moisture_deep_vwc_avg",
+    "moisture_shallow_minus_deep_vwc",
+    "salinity_shallow_ec_avg",
+    "temp_shallow_c_avg",
+    "temp_deep_c_avg",
+    "temp_shallow_minus_deep_c",
     "evap_moisture_pressure",
+    "moisture_deficit_index",
+    "salinity_shallow_30d_avg",
+    "salinity_trend_vs_30d",
     "latitude",
     "longitude",
 )

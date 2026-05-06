@@ -26,8 +26,10 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "snapshot_date": "2026-04-24",
     "pipeline_run_id": "",
     # Bronze soil sensor ingestion controls
-    "bronze_ingest_mode": "zip_and_files",  # zip_only | files_only | api_only | zip_and_files | zip_and_api
-    "readings_years_csv": "2023,2024,2025",
+    # Modes: zip_only | files_only | api_only | zip_and_files | zip_and_api
+    # Alias: "local" | "local_files" | "files_and_zip" -> zip_and_files (2022 zip + yearly CSVs, no API)
+    "bronze_ingest_mode": "zip_and_files",
+    "readings_years_csv": "2022,2023,2024,2025",
     "com_page_size": 100,
     "time_window_minutes": 60,
     "resume_from_utc": "",
@@ -65,11 +67,21 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "silver_site_file_table": "silver_site_file_reference",
     "silver_weather_table": "silver_weather_daily",
     "silver_weather_allow_empty_write": False,
-    "gold_features_table": "gold_soil_sensor_features",
-    "gold_depth_daily_table": "gold_soil_sensor_depth_daily",
-    "gold_irrigation_risk_table": "gold_irrigation_risk_daily",
-    "gold_plant_suitability_table": "gold_plant_suitability_zone",
-    "gold_ops_alert_table": "gold_ops_alert",
+    # Gold star schema (see notebooks/03_gold_features.py) — moisture/temp-led site profile; salinity secondary
+    "gold_dim_site_table": "gold_dim_site",
+    "gold_dim_depth_table": "gold_dim_depth",
+    "gold_dim_weather_daily_table": "gold_dim_weather_daily",
+    "gold_fact_salinity_depth_daily_table": "gold_fact_salinity_depth_daily",
+    "gold_fact_moisture_depth_daily_table": "gold_fact_moisture_depth_daily",
+    "gold_fact_temperature_depth_daily_table": "gold_fact_temperature_depth_daily",
+    "gold_fact_irrigation_risk_table": "gold_fact_irrigation_risk",
+    "gold_fact_soil_depth_peer_daily_table": "gold_fact_soil_depth_peer_daily",
+    "gold_site_depth_peer_summary_table": "gold_site_depth_peer_summary",
+    # Moisture floors for EC interpretability (sensor EC less reliable when soil is very dry).
+    "gold_ec_moisture_min_shallow_vwc": 25.0,
+    "gold_ec_moisture_min_deep_vwc": 18.0,
+    "gold_ec_moisture_shallow_depth_max_cm": 30,
+    "gold_peer_min_sites": 5,
     "weather_daily_table": "silver_weather_daily",
     "weather_date_col": "as_of_date",
     "weather_rainfall_col": "rainfall_mm",
@@ -129,6 +141,19 @@ def _merge_env_secrets(params: Dict[str, Any]) -> Dict[str, Any]:
     return params
 
 
+_BRONZE_INGEST_MODE_ALIASES = {
+    "local": "zip_and_files",
+    "local_files": "zip_and_files",
+    "files_and_zip": "zip_and_files",
+}
+
+
+def _normalize_bronze_ingest_mode(params: Dict[str, Any]) -> None:
+    mode = str(params.get("bronze_ingest_mode", "")).strip().lower()
+    if mode in _BRONZE_INGEST_MODE_ALIASES:
+        params["bronze_ingest_mode"] = _BRONZE_INGEST_MODE_ALIASES[mode]
+
+
 def resolve_params(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
     """Merge defaults with VICROOT_PARAMS_JSON, env secrets, and caller overrides.
 
@@ -141,4 +166,5 @@ def resolve_params(overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         params = _deep_merge(params, json.loads(raw))
     if overrides:
         params = _deep_merge(params, overrides)
+    _normalize_bronze_ingest_mode(params)
     return params

@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
-NOTEBOOK_VERSION = "v2026-04-25-bronze-files-mode-01"
+NOTEBOOK_VERSION = "v2026-05-04-bronze-com-2022-json-shards-04"
 
 try:
     from notebooks.lib.pipeline_params import resolve_params
@@ -62,7 +62,7 @@ except ModuleNotFoundError:
                 "snapshot_date": datetime.now().strftime("%Y-%m-%d"),
                 "pipeline_run_id": "",
                 "bronze_ingest_mode": "zip_and_files",
-                "readings_years_csv": "2023,2024,2025",
+                "readings_years_csv": "2022,2023,2024,2025",
                 "com_page_size": 100,
                 "time_window_minutes": 60,
                 "resume_from_utc": "",
@@ -132,7 +132,7 @@ def _parse_years(years_csv: str) -> List[int]:
             continue
         years.append(int(item))
     if not years:
-        raise ValueError("years_csv is empty; provide at least one year, e.g. 2023,2024,2025")
+        raise ValueError("years_csv is empty; provide at least one year, e.g. 2022,2023,2024,2025")
     return sorted(set(years))
 
 
@@ -162,6 +162,14 @@ def _lakehouse_to_local(path: str) -> str:
     if trimmed.startswith("Tables/"):
         return f"/lakehouse/default/{trimmed}"
     return trimmed
+
+
+def _soil_zip_input_ready(soil_zip_input_path: str) -> bool:
+    """True if the 2022 historical archive path resolves to an on-disk .zip file."""
+    p = (soil_zip_input_path or "").strip()
+    if not p.lower().endswith(".zip"):
+        return False
+    return os.path.isfile(_lakehouse_to_local(p))
 
 
 def _ensure_parent_dir(path: str) -> None:
@@ -258,6 +266,86 @@ def _csv_to_jsonl(csv_path: str, jsonl_path: str) -> int:
             out_handle.write("\n")
             row_count += 1
     return row_count
+
+
+def _iter_records_from_json_payload(payload: Any) -> Iterable[Dict[str, Any]]:
+    if payload is None:
+        return
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                yield item
+        return
+    if isinstance(payload, dict):
+        if isinstance(payload.get("results"), list):
+            for item in payload["results"]:
+                if isinstance(item, dict):
+                    yield item
+            return
+        yield payload
+
+
+def _discover_2022_record_sources(extract_dir: str) -> Tuple[List[str], List[str]]:
+    local_root = _lakehouse_to_local(extract_dir)
+    json_files: List[str] = []
+    csv_files: List[str] = []
+    all_files: List[str] = []
+    for dirpath, _, filenames in os.walk(local_root):
+        for filename in filenames:
+            path = os.path.join(dirpath, filename)
+            all_files.append(path)
+            lower = filename.lower()
+            if lower.endswith(".json"):
+                json_files.append(path)
+            elif lower.endswith(".csv"):
+                csv_files.append(path)
+    json_files.sort()
+    csv_files.sort()
+    if not json_files and not csv_files:
+        preview = "\n".join(all_files[:30]) if all_files else "(archive extracted no files)"
+        raise FileNotFoundError(
+            f"No JSON/CSV found in extracted 2022 archive: {local_root}\nExtracted files:\n{preview}"
+        )
+    return json_files, csv_files
+
+
+def _promote_2022_extract_to_records_jsonl(*, extract_dir: str, records_jsonl: str) -> Tuple[int, List[str]]:
+    json_files, csv_files = _discover_2022_record_sources(extract_dir)
+    jsonl_local = _lakehouse_to_local(records_jsonl)
+    _ensure_parent_dir(jsonl_local)
+    written = 0
+    sources: List[str] = []
+
+    if json_files:
+        with open(jsonl_local, "w", encoding="utf-8") as out_handle:
+            for path in json_files:
+                sources.append(path)
+                try:
+                    with open(path, "r", encoding="utf-8-sig") as in_handle:
+                        payload = json.load(in_handle)
+                except json.JSONDecodeError as err:
+                    raise RuntimeError(f"Invalid JSON in 2022 shard: {path}") from err
+                for row in _iter_records_from_json_payload(payload):
+                    out_handle.write(json.dumps(row, ensure_ascii=True))
+                    out_handle.write("\n")
+                    written += 1
+        return written, sources
+    soil_sensor_matches = [
+        p for p in csv_files if "soil" in os.path.basename(p).lower() and "sensor" in os.path.basename(p).lower()
+    ]
+    candidates = soil_sensor_matches or csv_files
+    preferred = [p for p in candidates if "2022" in os.path.basename(p).lower()]
+    if len(preferred) == 1:
+        csv_path = preferred[0]
+    elif len(candidates) == 1:
+        csv_path = candidates[0]
+    else:
+        preview = "\n".join(candidates[:20])
+        raise RuntimeError(f"Ambiguous 2022 CSV files in archive. Candidates:\n{preview}")
+
+    written = _csv_to_jsonl(csv_path, records_jsonl)
+    sources = [csv_path]
+    return written, sources
 
 
 def _read_first_site_coordinates(path: str) -> Tuple[float, float] | None:
@@ -778,7 +866,15 @@ def _run_bronze_input_guard(
 
     if ingest_mode in {"files_only", "zip_and_files"}:
         years = _parse_years(years_csv)
+        zip_ready_2022 = _soil_zip_input_ready(soil_zip_input_path)
         for year in years:
+            # 2022 is normally sourced from the uploaded historical zip, not a loose CSV on disk.
+            if year == 2022 and (ingest_mode == "zip_and_files" or zip_ready_2022):
+                print(
+                    "[GUARD][BRONZE] skipping year=2022 CSV preflight; 2022 is ingested from `soil_zip_input_path` "
+                    f"(ingest_mode={ingest_mode}, zip_found={zip_ready_2022})."
+                )
+                continue
             source_rel_path = soil_csv_file_pattern.format(year=year)
             expected_path = f"{soil_csv_input_dir.rstrip('/')}/{source_rel_path}"
             expected_local = _lakehouse_to_local(expected_path)
@@ -796,14 +892,34 @@ def _run_bronze_input_guard(
                         print(f"[GUARD][BRONZE][WARN] expected path missing; fallback candidate exists for year={year}: {candidate}")
                         break
                 if not fallback_exists:
-                    failures.append(f"Missing expected CSV for year={year}: {expected_path}")
+                    if year == 2022:
+                        failures.append(
+                            "Missing expected CSV for year=2022: "
+                            f"{expected_path}. "
+                            "Either upload that CSV, or set `soil_zip_input_path` to the CoM historical 2022 `.zip` "
+                            "so ingestion can unpack JSON/CSV shards (no API). "
+                            "With a valid zip on disk, `bronze_ingest_mode` may be `zip_and_files` or `files_only`. "
+                            "Or remove 2022 from `readings_years_csv`."
+                        )
+                    else:
+                        failures.append(
+                            "Missing expected CSV for year="
+                            f"{year}: {expected_path}. "
+                            "If you intend to source this year from the CoM API instead of Files, set "
+                            "`bronze_ingest_mode` to `zip_and_api` (or `api_only`) and provide `com_app_token`. "
+                            "Alternatively upload the yearly CSV into the expected path, or remove that year from "
+                            "`readings_years_csv`."
+                        )
             elif os.path.isdir(expected_local):
                 failures.append(f"Expected a CSV file but found a directory: {expected_path}")
             elif not source_rel_path.lower().endswith(".csv"):
                 failures.append(f"soil_csv_file_pattern must resolve to .csv filenames; got: {source_rel_path}")
 
-    if ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"}:
-        if not soil_zip_input_path.lower().endswith(".zip"):
+    _soil_zip_branch = ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"} or (
+        ingest_mode == "files_only" and _soil_zip_input_ready(soil_zip_input_path)
+    )
+    if _soil_zip_branch:
+        if not soil_zip_input_path.strip().lower().endswith(".zip"):
             failures.append("soil_zip_input_path must end with .zip")
 
     for label, path in [("site_file_input_path", site_file_input_path), ("weather_file_input_path", weather_file_input_path)]:
@@ -820,7 +936,8 @@ def _run_bronze_input_guard(
     if failures:
         for message in failures:
             print(f"[GUARD][BRONZE][FAIL] {message}")
-        raise RuntimeError("Bronze input guard failed. Fix input paths before ingestion.")
+        detail = "; ".join(failures)
+        raise RuntimeError(f"Bronze input guard failed. Fix input paths before ingestion. Details: {detail}")
     print("[GUARD][BRONZE] preflight passed.")
 
 
@@ -840,7 +957,7 @@ snapshot_date = params.get("snapshot_date", datetime.now().strftime("%Y-%m-%d"))
 pipeline_run_id = params.get("pipeline_run_id", f"manual-{snapshot_date}")
 
 ingest_mode = params.get("bronze_ingest_mode", "zip_and_files")
-years_csv = params.get("readings_years_csv", "2023,2024,2025")
+years_csv = params.get("readings_years_csv", "2022,2023,2024,2025")
 page_size = int(params.get("com_page_size", 100))
 time_window_minutes = int(params.get("time_window_minutes", 60))
 resume_from_utc = params.get("resume_from_utc", "")
@@ -901,20 +1018,36 @@ _run_bronze_input_guard(
 
 
 # %% [markdown]
-# # Cell 4 - 2022 zip branch (run when mode is `zip_only` or `zip_and_api`)
+# # Cell 4 - 2022 zip branch (historical archive; runs for zip_* modes or `files_only` when `soil_zip_input_path` exists)
 
-if ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"}:
+zip_2022_records_written = False
+if ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"} or (
+    ingest_mode == "files_only" and _soil_zip_input_ready(zip_input_path)
+):
     year_base_2022 = f"{raw_base}/year=2022"
     zip_output_path = f"{year_base_2022}/raw/zip/{zip_bronze_filename}"
     parsed_output_dir = f"{year_base_2022}/raw/extracted"
     _copy_zip_to_bronze(zip_input_path=zip_input_path, zip_output_path=zip_output_path)
     extracted = _extract_zip(zip_path=zip_output_path, extract_dir=parsed_output_dir)
     zip_extracted_count = len(extracted)
+    jsonl_path = f"{year_base_2022}/raw/records_file.jsonl"
+    total_written, shard_sources = _promote_2022_extract_to_records_jsonl(
+        extract_dir=parsed_output_dir, records_jsonl=jsonl_path
+    )
+    zip_2022_records_written = True
     _write_json(
         f"{year_base_2022}/metadata/extract_manifest.json",
-        {"zip_path": zip_output_path, "extracted_files": extracted, "extracted_at_utc": _utc_now_iso()},
+        {
+            "zip_path": zip_output_path,
+            "extracted_files": extracted,
+            "shard_files": shard_sources,
+            "records_file": jsonl_path,
+            "total_written": total_written,
+            "extracted_at_utc": _utc_now_iso(),
+        },
     )
-    print(f"[OK] 2022 zip copied + extracted: {zip_output_path}")
+    print(f"[ZIP] year=2022 rows={total_written} source={zip_output_path}")
+    year_rows_by_source.setdefault("zip", {})["2022"] = total_written
     watermark_rows.append(("com_soil_sensor_readings_2022_zip", pipeline_run_id, "2022-12-31"))
 
 
@@ -924,6 +1057,9 @@ if ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"}:
 if ingest_mode in {"files_only", "zip_and_files"}:
     years = _parse_years(years_csv)
     for year in years:
+        if year == 2022 and zip_2022_records_written:
+            print("[INFO] skipping separate 2022 CSV file branch; zip branch already wrote records_file.jsonl")
+            continue
         source_rel_path = soil_csv_file_pattern.format(year=year)
         source_filename = os.path.basename(source_rel_path)
         csv_source_path = f"{soil_csv_input_dir}/{source_rel_path}"
@@ -962,6 +1098,9 @@ if ingest_mode in {"api_only", "zip_and_api"}:
         )
     years = _parse_years(years_csv)
     for year in years:
+        if year == 2022 and zip_2022_records_written:
+            print("[INFO] skipping 2022 API branch; zip branch already wrote records_file.jsonl")
+            continue
         year_base = f"{raw_base}/year={year}"
         jsonl_path = f"{year_base}/raw/records_api.jsonl"
         # Reset file so reruns are idempotent for the year partition.
@@ -1151,7 +1290,8 @@ _run_bronze_dq_tests(
     dq_fail_on_error=dq_fail_on_error,
     bronze_min_rows_per_year=bronze_min_rows_per_year,
     year_rows_by_source=year_rows_by_source,
-    zip_mode_used=ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"},
+    zip_mode_used=ingest_mode in {"zip_only", "zip_and_api", "zip_and_files"}
+    or (ingest_mode == "files_only" and _soil_zip_input_ready(zip_input_path)),
     zip_extracted_count=zip_extracted_count,
     watermark_count=len(watermark_rows),
 )

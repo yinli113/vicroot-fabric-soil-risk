@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
-NOTEBOOK_VERSION = "v2026-04-28-bronze-soil-split-01"
+NOTEBOOK_VERSION = "v2026-05-04-bronze-soil-2022-json-shards-02"
 
 try:
     from notebooks.lib.pipeline_params import resolve_params
@@ -45,7 +45,7 @@ except ModuleNotFoundError:
                 "pipeline_run_id": "",
                 "watermark_table": "metadata.ingestion_watermarks",
                 "bronze_ingest_mode": "zip_and_files",
-                "readings_years_csv": "2023,2024,2025",
+                "readings_years_csv": "2022,2023,2024,2025",
                 "soil_csv_input_dir": "Files/raw/soil",
                 "soil_csv_file_pattern": "soil-sensor-readings-historical-data-{year}.csv",
                 "soil_zip_input_path": "Files/raw/soil/Soil Sensor Readings - Historical data (2022).zip",
@@ -71,6 +71,13 @@ def _lakehouse_to_local(path: str) -> str:
     if path.startswith("Files/"):
         return f"/lakehouse/default/{path}"
     return path
+
+
+def _soil_zip_input_ready(soil_zip_input_path: str) -> bool:
+    p = (soil_zip_input_path or "").strip()
+    if not p.lower().endswith(".zip"):
+        return False
+    return os.path.isfile(_lakehouse_to_local(p))
 
 
 def _parse_bool(value: Any, default: bool) -> bool:
@@ -189,6 +196,90 @@ def _csv_to_jsonl(csv_path: str, jsonl_path: str) -> int:
     return written
 
 
+def _iter_records_from_json_payload(payload: Any) -> Iterable[Dict[str, Any]]:
+    if payload is None:
+        return
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                yield item
+        return
+    if isinstance(payload, dict):
+        if isinstance(payload.get("results"), list):
+            for item in payload["results"]:
+                if isinstance(item, dict):
+                    yield item
+            return
+        yield payload
+
+
+def _discover_2022_record_sources(extract_dir: str) -> Tuple[List[str], List[str]]:
+    """Return (json_files, csv_files) discovered under an extracted 2022 archive."""
+    local_root = _lakehouse_to_local(extract_dir)
+    json_files: List[str] = []
+    csv_files: List[str] = []
+    all_files: List[str] = []
+    for dirpath, _, filenames in os.walk(local_root):
+        for filename in filenames:
+            path = os.path.join(dirpath, filename)
+            all_files.append(path)
+            lower = filename.lower()
+            if lower.endswith(".json"):
+                json_files.append(path)
+            elif lower.endswith(".csv"):
+                csv_files.append(path)
+    json_files.sort()
+    csv_files.sort()
+    if not json_files and not csv_files:
+        preview = "\n".join(all_files[:30]) if all_files else "(archive extracted no files)"
+        raise FileNotFoundError(
+            f"No JSON/CSV found in extracted 2022 archive: {local_root}\nExtracted files:\n{preview}"
+        )
+    return json_files, csv_files
+
+
+def _promote_2022_extract_to_records_jsonl(*, extract_dir: str, records_jsonl: str) -> Tuple[int, List[str]]:
+    """Promote extracted 2022 archive into newline-delimited JSON records for Silver."""
+    json_files, csv_files = _discover_2022_record_sources(extract_dir)
+    dst = _lakehouse_to_local(records_jsonl)
+    _ensure_parent(dst)
+    written = 0
+    sources: List[str] = []
+
+    if json_files:
+        with open(dst, "w", encoding="utf-8") as out_f:
+            for path in json_files:
+                sources.append(path)
+                try:
+                    with open(path, "r", encoding="utf-8-sig") as in_f:
+                        payload = json.load(in_f)
+                except json.JSONDecodeError as err:
+                    raise RuntimeError(f"Invalid JSON in 2022 shard: {path}") from err
+                for row in _iter_records_from_json_payload(payload):
+                    out_f.write(json.dumps(row, ensure_ascii=True))
+                    out_f.write("\n")
+                    written += 1
+        return written, sources
+
+    # CSV fallback (older archives)
+    soil_sensor_matches = [
+        p for p in csv_files if "soil" in os.path.basename(p).lower() and "sensor" in os.path.basename(p).lower()
+    ]
+    candidates = soil_sensor_matches or csv_files
+    preferred = [p for p in candidates if "2022" in os.path.basename(p).lower()]
+    if len(preferred) == 1:
+        csv_path = preferred[0]
+    elif len(candidates) == 1:
+        csv_path = candidates[0]
+    else:
+        preview = "\n".join(candidates[:20])
+        raise RuntimeError(f"Ambiguous 2022 CSV files in archive. Candidates:\n{preview}")
+
+    written = _csv_to_jsonl(csv_path, records_jsonl)
+    sources = [csv_path]
+    return written, sources
+
+
 def _write_json(path: str, payload: Dict[str, Any]) -> None:
     local = _lakehouse_to_local(path)
     _ensure_parent(local)
@@ -288,7 +379,7 @@ pipeline_run_id = params.get("pipeline_run_id", f"manual-{snapshot_date}")
 watermark_table = params.get("watermark_table", "metadata.ingestion_watermarks")
 
 ingest_mode = params.get("bronze_ingest_mode", "zip_and_files")
-years = _parse_years(params.get("readings_years_csv", "2023,2024,2025"))
+years = _parse_years(params.get("readings_years_csv", "2022,2023,2024,2025"))
 soil_csv_input_dir = params.get("soil_csv_input_dir", "Files/raw/soil").rstrip("/")
 soil_csv_file_pattern = params.get("soil_csv_file_pattern", "soil-sensor-readings-historical-data-{year}.csv")
 zip_input_path = params.get("soil_zip_input_path", "Files/raw/soil/Soil Sensor Readings - Historical data (2022).zip")
@@ -301,8 +392,11 @@ page_size = int(params.get("com_page_size", 100))
 time_window_minutes = int(params.get("time_window_minutes", 60))
 
 watermarks: List[Tuple[str, str, str]] = []
+zip_2022_records_written = False
 
-if ingest_mode in {"zip_only", "zip_and_files", "zip_and_api"}:
+if ingest_mode in {"zip_only", "zip_and_files", "zip_and_api"} or (
+    ingest_mode == "files_only" and _soil_zip_input_ready(zip_input_path)
+):
     year_base = f"{bronze_soil_root}/year=2022"
     zip_out = f"{year_base}/raw/zip/{zip_slug}"
     extract_dir = _lakehouse_to_local(f"{year_base}/raw/extracted")
@@ -310,14 +404,31 @@ if ingest_mode in {"zip_only", "zip_and_files", "zip_and_api"}:
     os.makedirs(extract_dir, exist_ok=True)
     with zipfile.ZipFile(_lakehouse_to_local(zip_out), "r") as z:
         z.extractall(extract_dir)
+    bronze_jsonl = f"{year_base}/raw/records_file.jsonl"
+    rows, shard_sources = _promote_2022_extract_to_records_jsonl(
+        extract_dir=extract_dir, records_jsonl=bronze_jsonl
+    )
+    zip_2022_records_written = True
     _write_json(
         f"{year_base}/metadata/ingest_summary.json",
-        {"source_type": "zip", "source_file": zip_input_path, "bronze_file": zip_out, "snapshot_date": snapshot_date},
+        {
+            "source_type": "zip",
+            "source_file": zip_input_path,
+            "bronze_file": zip_out,
+            "records_file": bronze_jsonl,
+            "row_count": rows,
+            "shard_files": shard_sources,
+            "snapshot_date": snapshot_date,
+        },
     )
+    print(f"[ZIP] soil year=2022 rows={rows}")
     watermarks.append(("bronze_soil_2022_zip", pipeline_run_id, "2022-12-31"))
 
 if ingest_mode in {"files_only", "zip_and_files"}:
     for year in years:
+        if year == 2022 and zip_2022_records_written:
+            print("[INFO] skipping separate 2022 CSV file branch; zip branch already wrote records_file.jsonl")
+            continue
         filename = soil_csv_file_pattern.format(year=year)
         src = f"{soil_csv_input_dir}/{filename}"
         year_base = f"{bronze_soil_root}/year={year}"
@@ -336,6 +447,9 @@ if ingest_mode in {"api_only", "zip_and_api"}:
     if not app_token:
         raise RuntimeError("com_app_token is required for api_only/zip_and_api runs.")
     for year in years:
+        if year == 2022 and zip_2022_records_written:
+            print("[INFO] skipping 2022 API branch; zip branch already wrote records_file.jsonl")
+            continue
         year_base = f"{bronze_soil_root}/year={year}"
         jsonl = f"{year_base}/raw/records_api.jsonl"
         local = _lakehouse_to_local(jsonl)

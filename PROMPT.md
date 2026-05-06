@@ -4,15 +4,17 @@
 
 Build an **AI-assisted urban forestry data platform** for Greater Melbourne: ingest **~80k City of Melbourne trees**, **Agriculture Victoria soil** profiles, and **BOM** weather, run a **Fabric** medallion pipeline (Bronze → Silver → Gold), expose **Power BI DirectLake**, and leave room for **Databricks** ML on the same Delta/OneLake footprint.
 
+**Current VicRoot sensor analytics focus (2026):** The **City of Melbourne soil-sensor network** is analysed primarily on **moisture and soil temperature** at **site grain**, including **shallow-vs-deep profiles** (buffering, storage, decoupling from regional weather) when monitoring locations are close enough to treat **daily weather as shared**. **Salinity (sensor EC)** remains in the model for **context and secondary screening**—not as the main story—because values are a **sensor EC proxy** (not lab `ECe`), are **moisture-qualified** for fair peer comparison, and the programme intentionally **avoids “tree suitability” claims** from sensors alone. See [docs/architecture.md](docs/architecture.md) *Analytical framing*.
+
 ---
 
 ## 1. Business goal and context
 
 | | |
 |--|--|
-| **Vision** | Support Melbourne’s **Urban Forest Strategy** with timely, explainable risk signals—not just a static tree map. |
-| **Core problem** | Elevated **tree mortality** driven by **soil stress** (pH, salinity, moisture imbalance). |
-| **Solution** | An end-to-end pipeline that scores **which trees are at risk** using **geospatial soil** context and **weather-derived moisture** stress, not species alone. |
+| **Vision** | Support Melbourne’s **Urban Forest Strategy** with timely, explainable **soil monitoring signals**—not just a static tree map. |
+| **Core problem** | **Subsurface moisture and thermal behaviour** varies by **site and depth** even under similar regional weather; poor buffering or extreme shallow–deep contrast can indicate **limited soil volume, drainage, or microsite stress**. |
+| **Solution** | A medallion pipeline that combines **sensor depth facts**, **daily weather context**, and **peer-normalised salinity** (optional) so analysts can compare **sites** and **profiles**—reserving **species-level suitability** for richer evidence later. |
 
 ---
 
@@ -66,9 +68,10 @@ Build an **AI-assisted urban forestry data platform** for Greater Melbourne: ing
 
 ### Phase 3 — Gold (insights and ML-ready features)
 
-- **Resilience / risk:** combine **species tolerance** signals with **local soil** and **moisture deficit**.
-- **Models:** start with **rule-based** tiers for demos; add **Spark ML** or **Databricks** models for **health-decline** probability as the stack matures.
-- **Operational:** **Data Activator** (Reflex) for alerts when **significant** trees enter **high-risk** bands.
+- **Site-centric monitoring:** Gold emphasises **moisture and temperature** by **site × date × depth**, plus **site × date** shallow context, **shallow–deep deltas** (`gold_fact_irrigation_risk`), and **weather-linked peer views** for salinity where EC is interpretable.
+- **Salinity:** keep **auditable tiers and z-scores** as **secondary** context; do not fold salinity into a single “suitability” score without agronomic calibration.
+- **Models:** start with **rule-based** bands and profile metrics for ops dashboards; add **Spark ML** or **Databricks** models only when outcome labels and features are agreed.
+- **Operational:** **Data Activator** (Reflex) can alert on **moisture/temperature profile** thresholds or **salinity peer tails**, scoped to explicit definitions.
 
 ---
 
