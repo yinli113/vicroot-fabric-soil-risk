@@ -2,7 +2,7 @@
 
 # TL;DR
 
-This report summarises **three Power BI report pages** built on VicRoot **Gold** data: **Page 1** (network snapshot: shallow moisture/temperature extremes, depth profiles, low-variance salinity as context), **Page 2** (soil temperature vs weather and **Princess Bridge / Fitzroy Garden / Royal Parade** depth behaviour), **Page 3** (**Bourke Street** moisture: microsite spread and **Bourke South 6** drought-era depth pattern). **Power BI** supports exploration and monitoring well but does not, by itself, quantify **which weather regimes drive** soil response; **the next step is ML** (supervised models and careful evaluation) on the same **OneLake / Gold** footprint, with optional **Databricks**.
+This report summarises **three Power BI report pages** built on VicRoot **Gold** data, documents a **baseline moisture ML** run and **how to read its metrics** (for readers who are **not data-science specialists**), and outlines **CI/CD and deployment** next steps for **Fabric + GitHub**.
 
 ---
 
@@ -100,25 +100,115 @@ Those questions motivate **machine learning** (or **statistical models**) on cur
 
 ---
 
-## 8. Recommended next step: ML (on the same Gold footprint)
+## 8. ML baseline (Fabric): moisture vs lagged weather
 
-**Platform.** Keep **Gold on OneLake**; train in **Databricks** (or **Fabric notebooks** for smaller jobs); write predictions or diagnostics to **new Delta tables** (e.g. `gold_site_depth_ml_*` or `feature_*`) per [architecture.md](architecture.md) handoff notes.
+**Implementations.** Notebook [`notebooks/05_ml_moisture_baseline.py`](../notebooks/05_ml_moisture_baseline.py) joins **`gold_fact_moisture_depth_daily`** (default **30 cm**) to **`gold_dim_weather_daily`**, builds **7-day rolling** rain / evap / stress and **lag-1 moisture**, fits **Spark MLlib LinearRegression** with a **time-based train split** (`ml_train_end_date`), and writes **`gold_ml_moisture_baseline`**. Parameters are in [`notebooks/lib/pipeline_params.py`](../notebooks/lib/pipeline_params.py).
 
-**Outcome ideas (examples).**
+**Where to read outputs.**
 
-| Target | Features (examples) | Notes |
-|--------|----------------------|--------|
-| **Moisture** `moisture_vwc_avg` or Δ vs prior day | Lagged weather (`rainfall_mm`, `evap_mm`, `temp_*`), **seasonality**, **site** encoding, **depth**, **prior moisture** | Time-series or panel regression; respect **train/test by time**. |
-| **Temperature** `temp_c_avg` | Air temp, **lagged air**, **soil temp lags**, site, depth | Compare **nonlinear** models if linear residuals show regime change. |
-| **Regime labels** | Cluster weather bins → predict **moisture quantile** or **stress flags** | Explainable clusters map to operational language. |
+| Where | What |
+|--------|------|
+| **Notebook log** | Lines tagged `[ML][TRAIN]` and `[ML][TEST]` (R², RMSE, coefficients). |
+| **Lakehouse table** | `gold_ml_moisture_baseline` — actual **`moisture_vwc_avg`**, **`pred_moisture_vwc_avg`**, **`moisture_residual`**, feature columns, **`is_train_row`**, **`model_id`**, **`snapshot_date`**. |
+| **Power BI** | Plot actual vs predicted or residual over **`as_of_date`** by **`site_id`**. |
 
-**Evaluation.** **Backtest by time** (no random split across dates at same site if leakage is a concern). Report **errors by site and depth** and by **season**. Keep **Power BI** for **monitoring model drift** and **overlaying predictions** on the same pages.
+### 8.1 Example metrics (what good numbers look like)
 
-**Optional “deeper” statistics.** **Granger-style** or **distributed-lag** frameworks can complement black-box ML where stakeholders need **interpretable lags** — still data-hungry and not a substitute for domain review.
+Illustrative run (your workspace may differ slightly):
+
+- **Train** (rows with `as_of_date` ≤ train end): **RMSE ≈ 1.4** (% VWC), **R² ≈ 0.99**, ~24k instances.
+- **Test** (after train end): **R² ≈ 0.99**, **RMSE ≈ 1.3**, ~27k instances.
+
+**Train vs test.** Similar **test** and **train** R² usually means the simple split did **not** collapse on the holdout period — but it does **not** prove **causal** weather effects (see below).
+
+### 8.2 Interpreting the coefficients (plain language)
+
+The model is **linear**: each coefficient is an adjustment **holding the other inputs fixed**. **Units** mix **mm** (rain/ET over 7 days) and **°C** with **% VWC**, so **big vs small** coefficients are not compared by raw magnitude alone.
+
+| Feature | Typical sign in baseline | Meaning |
+|---------|--------------------------|--------|
+| **Intercept** | Small | Mathematical baseline when inputs are zero; not a physical “true” dry point. |
+| **rain_7d_mm** | Positive | More **7-day rain** → slightly **higher** predicted moisture. Often **small** because **yesterday’s moisture** already explains most of the signal. |
+| **evap_7d_mm** | Negative | More **7-day ET** → slightly **lower** predicted moisture. |
+| **stress_7d_mm** | Negative | 7-day sum of **ET − rain** (atmospheric moisture demand vs rain); overlaps rain and evap — **multicollinearity** is expected; do not read the three weather sums as three independent “drivers.” |
+| **temp_avg_c** | Small (can be + or −) | **Air temperature** nudge after accounting for lag and rolling water balance; easily **confounded** with season — do not treat as pure “heat wets/dries soil.” |
+| **moisture_lag1_vwc** | **Large (~0.9–1.0)** | **Dominant term:** today’s moisture is **almost yesterday’s moisture** plus a **small** weather correction. |
+
+### 8.3 Why R² is so high (and what that does / doesn’t mean)
+
+- Soil moisture at **30 cm** usually **changes smoothly** day to day, so **lag-1 moisture** alone makes the target **highly predictable** → **very high R²** is **expected**, not magic.
+- The model is **useful** for: **smooth short-horizon** tracking, and **`moisture_residual`** in BI (when is the site **wetter or drier** than “yesterday + weather” suggests?).
+- It does **not**, by itself, answer: “**Which weather regime** drives soil?” — the lag **soaks most variance**. For that story, later experiments might **drop** the lag, add **longer deficits**, or use **weather-only** baselines (harder task, lower R², clearer attribution).
+
+### 8.4 Optional follow-on modelling (when you want more “weather story”)
+
+| Idea | Trade-off |
+|------|-----------|
+| Fit **without** `moisture_lag1_vwc` | **Lower R²**; more emphasis on **weather-only** signal. |
+| **Per-site** coefficients or regularised models | Richer **heterogeneity**, more complexity. |
+| **Longer drought indices** instead of overlapping rain+evap+stress | Less redundancy, clearer narrative. |
+
+**Evaluation discipline** stays the same: **time-based** splits, check errors **by site and season**, watch **residual drift** over new years.
 
 ---
 
-## 9. Figure sources
+## 9. CI/CD and deployment (Fabric + GitHub) — practical path
+
+This section is for **shipping** the medallion + ML **reliably**, without needing deep data-science depth. **“Deploy”** here means: **versioned code**, **automated or repeatable runs**, and **documented parameters** — not necessarily k8s or a model endpoint.
+
+### 9.1 What to put in CI (GitHub Actions)
+
+| Check | Why |
+|--------|-----|
+| **Lint / format** (e.g. `ruff` or `black` on `notebooks/lib`, `src`) | Catches syntax and style before merge. |
+| **Static validation** | Optional: JSON schema for `config/ge_validation_rules.json`, `fabric/*.json` templates. |
+| **Secrets** | Never store API keys in repo; use **GitHub Actions secrets** only to push tokens to **non-git** systems if needed. |
+
+**Azure DevOps:** Some Fabric trials allow **Azure Pipelines** but not GitHub Actions for the same checks. This repo includes [`azure-pipelines.yml`](../azure-pipelines.yml) and a short runbook: [azure-devops-fabric-ci.md](azure-devops-fabric-ci.md).
+
+**Reality check:** PySpark notebooks often **do not run in GitHub-hosted runners** (no Fabric cluster). CI is usually **lightweight**: **files compile**, **params align** with docs, **no committed secrets** — full pipeline runs stay in **Fabric**.
+
+### 9.2 What “CD” means for Fabric
+
+| Component | Practice |
+|-----------|----------|
+| **Source of truth** | **Git** (GitHub): notebooks, `pipeline_params.py`, `docs/`, `fabric/` templates. |
+| **Runtime** | **Fabric workspace**: lakehouse, pipelines, notebook activities. |
+| **Promotion** | **Manual**: merge to `main` → pull or copy notebooks into Fabric Git sync, or paste runbook. **Automated**: **Fabric Git integration** (Azure DevOps or GitHub via workspace settings) so the workspace tracks a **branch** — varies by tenant SKU. |
+| **Orchestration** | **Pipeline** chaining: Bronze → Silver → Gold → optional **`05_ml_moisture_baseline`**; **schedule** (daily/weekly) + **failure alerts**. |
+| **Parameters** | Pass **`VICROOT_PARAMS_JSON`** or Fabric **notebook parameters** mirroring [`pipeline_params.py`](../notebooks/lib/pipeline_params.py) — avoid hard-coded workspace IDs in business logic. |
+
+Start with: **one pipeline** with **notebook activities** and **clear parameter set** for `snapshot_date`, table names, `ml_train_end_date`, then add **notifications** on failure.
+
+### 9.3 Power BI “deployment”
+
+- **Semantic model** → **DirectLake** to Gold + `gold_ml_moisture_baseline`.
+- Treat **dataset refresh** as tied to **pipeline success** (refresh after Gold/ML notebook succeeds, if your model depends on those tables).
+- **Workspace** promotion (dev → test → prod) mirrors **Fabric workspace** or **capacity** strategy — often **manual** early on.
+
+### 9.4 Suggested learning order (non–data scientist)
+
+1. **Git branching**: `main` protected, **feature branches**, small PRs (your repo is already on GitHub).
+2. **GitHub Actions**: one workflow — **checkout**, **install Python**, **ruff check** (or `python -m compileall` on shared libs only).
+3. **Fabric**: **Git integration** docs (Microsoft Learn) for your org’s supported path.
+4. **Pipeline**: duplicate **dev pipeline** to **prod** with different **parameters** (lakehouse name, paths), not different code.
+
+### 9.5 VicRoot operating model (default)
+
+For this project, **until** a wider team needs PR gates:
+
+| Layer | Choice |
+|--------|--------|
+| **Code & docs** | **Git/GitHub** remains the **source of truth**; commit after meaningful notebook or param changes. |
+| **Fabric content promotion** | **Fabric Deployment Pipeline** (e.g. dev → test → prod workspaces) for **reports / datasets** and other supported items where you use it. |
+| **Notebook sync** | **Manual** (upload or paste from repo, or enable **Fabric Git integration** later if you want auto-sync). No requirement for **GitHub Actions** initially. |
+| **Orchestration** | **Fabric data pipelines** schedule **Bronze → Silver → Gold → ML** runs in the **target** workspace. |
+
+Revisit **GitHub Actions** or **Azure DevOps** when you need **mandatory checks on every merge** or multi-person **release discipline**.
+
+---
+
+## 10. Figure sources
 
 Screenshots stored in-repo:
 
@@ -128,6 +218,6 @@ Screenshots stored in-repo:
 
 ---
 
-## 10. Closing
+## 11. Closing
 
-The three pages establish a **coherent monitoring narrative**: **shared weather**, **site contrasts**, and **depth profiles**, with **salinity** in a **supporting** role. **Stopping at Power BI** is reasonable once exploration plateaus; **ML is the natural next step** to ask **conditional** questions — *under which weather sequences do moisture and temperature at each depth deviate?* — while staying on **VicRoot’s** **parameterised, lakehouse-first** architecture.
+The three pages establish a **coherent monitoring narrative**: **shared weather**, **site contrasts**, and **depth profiles**, with **salinity** in a **supporting** role. A **baseline ML table** (`gold_ml_moisture_baseline`) adds **predicted moisture and residuals** for BI; **high R²** here mainly reflects **smooth moisture persistence** plus weather nudges — interpret accordingly (**§8**). **Default delivery stack:** **Git** + **Fabric Deployment Pipeline** + **manual notebook sync** (**§9.5**); add **GitHub Actions** when team process needs it.

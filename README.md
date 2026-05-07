@@ -24,4 +24,6 @@ VicRoot is a Microsoft Fabric medallion pipeline for Melbourne **urban soil sens
 
 - [Architecture & Fabric parameters](docs/architecture.md)
 - [Gold data dictionary (units & grains)](docs/dic.md)
-- [Power BI dashboard report — Pages 1–3, salinity rationale, ML next steps](docs/power_bi_dashboard_report.md)
+- [Power BI dashboard report — Pages 1–3, ML baseline interpretation, CI/CD path](docs/power_bi_dashboard_report.md)
+- [Azure DevOps CI (offline validation, no Spark)](docs/azure-devops-fabric-ci.md)
+- [Fabric pipeline activity checklist — Bronze → Silver → Gold → ML](fabric/pipeline_activity_checklist.md)

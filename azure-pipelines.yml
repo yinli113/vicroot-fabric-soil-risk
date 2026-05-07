@@ -1,0 +1,52 @@
+# VicRoot — Azure DevOps CI (no Fabric Spark; validates repo only).
+# Create pipeline: Pipelines → New → Azure Repos Git → select this repo → Existing Azure Pipelines YAML → path: /azure-pipelines.yml
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - '*'
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  - job: validate
+    displayName: Lint-free validation (offline)
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+        displayName: Use Python $(PYTHON_VERSION)
+
+      - script: |
+          python -m pip install --upgrade pip
+          pip install python-dotenv
+        displayName: Install dependencies (match notebooks/lib imports)
+
+      - script: |
+          python -m compileall -q notebooks/lib src
+        displayName: Compile shared Python (syntax check)
+
+      - script: |
+          python << 'PY'
+          import json
+          from pathlib import Path
+          root = Path(".")
+          paths = [
+              root / "config" / "ge_validation_rules.json",
+              root / "fabric" / "pipeline_bronze.parameters.template.json",
+          ]
+          for p in paths:
+              json.loads(p.read_text(encoding="utf-8"))
+              print(f"OK {p}")
+          PY
+        displayName: Validate JSON templates

@@ -167,6 +167,7 @@ Column-level meanings and units are maintained in [`docs/dic.md`](dic.md).
 | `gold_fact_irrigation_risk` | (`site_id`, `as_of_date`) | **Primary context:** shallow + deep **moisture/temperature** (`moisture_shallow_*`, `moisture_deep_*`, `temp_*`, **`moisture_shallow_minus_deep_vwc`**, **`temp_shallow_minus_deep_c`**) plus `moisture_status`, `evap_moisture_pressure`. **Secondary:** shallow **salinity** tiers (`salinity_risk_tier`, etc.) kept separate from moisture/temperature. Join weather on `as_of_date` → `gold_dim_weather_daily`. |
 | `gold_fact_soil_depth_peer_daily` | (`site_id`, `as_of_date`, `depth_cm`) | Joins salinity/moisture/temperature depth facts with **weather bins** (`rain_band`, `temp_band`, `weather_bin_key`), **`ec_reading_reliable`** (moisture floor by depth), and **peer z-score** for qualified salinity vs other sites same day/depth/bin. Params: `gold_ec_moisture_*`, `gold_peer_min_sites` (see `docs/dic.md`). |
 | `gold_site_depth_peer_summary` | (`site_id`, `depth_cm`) | Aggregates peer z behaviour per site×depth: reliability rate, mean z, mean \|z\|, tail counts. For ranking “who diverges under similar weather.” |
+| `gold_ml_moisture_baseline` | (`site_id`, `as_of_date`, `depth_cm`) | Optional **ML skeleton** output from `notebooks/05_ml_moisture_baseline.py`: lagged weather features, **`pred_moisture_vwc_avg`**, **`moisture_residual`**, **`is_train_row`**, **`model_id`**, **`snapshot_date`**. Default **single depth** via `ml_target_depth_cm`. **Store in the lakehouse** unless you add an **ADLS Gen2** shortcut for external analytics. |
 
 The previous single table `gold_fact_sensor_feature` is **removed** — drop it in the lakehouse if it still exists after repointing Power BI.
 
@@ -246,9 +247,16 @@ Use **DirectLake** against Gold Delta tables (and later prediction table). Avoid
 - [ ] Batch scoring cadence and **single write location** for predictions agreed.
 - [ ] `model_version` and `scored_at` on all prediction writes.
 
+## CI/CD (source control vs Fabric runtime)
+
+**Principle:** Git is the **versioned source** for notebooks and `pipeline_params.py`; **Microsoft Fabric** is where **Spark** runs and Delta tables are written. Trial or small **F-skus** still hit **capacity** limits when too many notebook sessions start at once — CI in Azure DevOps does **not** use Fabric capacity; it only validates files in the repo.
+
+For **Azure DevOps Pipelines** (PR-safe checks without Livy), see [azure-devops-fabric-ci.md](azure-devops-fabric-ci.md) and `azure-pipelines.yml` at repo root.
+
 ## Repo layout (reference)
 
 - `notebooks/` — PySpark scripts / notebook exports; use `notebooks/lib/pipeline_params.py` for params.
 - `fabric/` — pipeline notes and parameter templates for the Fabric portal.
 - `config/` — optional JSON for validation rules and thresholds.
 - `sql/` — DDL snippets for metadata tables.
+- `azure-pipelines.yml` — Azure DevOps YAML for offline validation (optional).

@@ -36,9 +36,9 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "watermark_table": "metadata.ingestion_watermarks",
     "com_dataset_soil_readings": "soil-sensor-readings-historical-data",
     "com_dataset_soil_locations": "soil-sensor-locations",
-    "soil_zip_input_path": "Files/medallion/bronze/Soil Sensor Readings - Historical data (2022).zip",
+    "soil_zip_input_path": "Files/medallion/bronze/com_soil_sensor_readings/source=historical/year=2022/raw/zip/soil_sensor_readings_historical_2022.zip",
     "soil_zip_filename_slug": "soil_sensor_readings_historical_2022.zip",
-    "soil_csv_input_dir": "Files/medallion/bronze",
+    "soil_csv_input_dir": "Files/medallion/bronze/com_soil_sensor_readings",
     "soil_csv_file_pattern": "soil-sensor-readings-historical-data-{year}.csv",
     # Optional extra file ingests (uploaded into Lakehouse Files)
     "site_file_input_path": "",
@@ -77,6 +77,13 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "gold_fact_irrigation_risk_table": "gold_fact_irrigation_risk",
     "gold_fact_soil_depth_peer_daily_table": "gold_fact_soil_depth_peer_daily",
     "gold_site_depth_peer_summary_table": "gold_site_depth_peer_summary",
+    # ML baseline (see notebooks/05_ml_moisture_baseline.py) — same lakehouse Delta by default
+    "gold_ml_moisture_baseline_table": "gold_ml_moisture_baseline",
+    "ml_target_depth_cm": 30,
+    "ml_train_end_date": "2023-12-31",
+    "ml_rolling_days": 7,
+    "ml_min_train_rows": 80,
+    "ml_model_id": "linreg_weather_lags_v1",
     # Moisture floors for EC interpretability (sensor EC less reliable when soil is very dry).
     "gold_ec_moisture_min_shallow_vwc": 25.0,
     "gold_ec_moisture_min_deep_vwc": 18.0,

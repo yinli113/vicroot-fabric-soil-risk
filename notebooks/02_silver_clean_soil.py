@@ -72,7 +72,7 @@ except ModuleNotFoundError:
                 "readings_years_csv": "2022,2023,2024,2025",
                 "silver_include_api_source": True,
                 "silver_include_file_source": True,
-                "soil_csv_input_dir": "Files/raw/soil",
+                "soil_csv_input_dir": "Files/medallion/bronze/com_soil_sensor_readings",
                 "soil_csv_file_pattern": "soil-sensor-readings-historical-data-{year}.csv",
                 "silver_records_table": "silver_soil_sensor_readings",
                 "silver_quarantine_table": "silver_soil_sensor_quarantine",
@@ -171,7 +171,9 @@ snapshot_date = params.get("snapshot_date", "2026-04-28")
 years = _parse_years(params.get("readings_years_csv", "2022,2023,2024,2025"))
 include_api = _parse_bool(params.get("silver_include_api_source", True), True)
 include_file = _parse_bool(params.get("silver_include_file_source", True), True)
-soil_csv_input_dir = params.get("soil_csv_input_dir", "Files/raw/soil").rstrip("/")
+soil_csv_input_dir = params.get(
+    "soil_csv_input_dir", "Files/medallion/bronze/com_soil_sensor_readings"
+).rstrip("/")
 soil_csv_file_pattern = params.get("soil_csv_file_pattern", "soil-sensor-readings-historical-data-{year}.csv")
 
 records_dfs: List[DataFrame] = []
