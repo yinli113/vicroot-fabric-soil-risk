@@ -2,7 +2,7 @@
 
 # TL;DR
 
-**Phase in focus:** Phase 1 (Bronze) scaffolding complete in-repo; implement ingestion and watermarks in Fabric next. **If you read one file:** [docs/architecture.md](docs/architecture.md) (includes **Fabric resource naming** and Bronze paths for the 2022 soil zip).
+**Phase in focus:** In-repo scaffolding is ahead of **Fabric capacity** — **paused** end-to-end data pipeline runs (430 / small SKU); **near-term engineering** is wiring **Azure DevOps Pipelines** for offline CI (see [docs/azure-devops-fabric-ci.md](../docs/azure-devops-fabric-ci.md)). Resume Fabric medallion deployment when capacity allows (**serial** Bronze on F2). **If you read one file:** [docs/architecture.md](../docs/architecture.md).
 
 ## Current phase
 
@@ -35,6 +35,7 @@
 - 2026-04-28: Fixed Fabric notebook activity parameter wiring gap in `01_bronze_ingest_weather.py` by merging runtime-injected base parameters from notebook globals (plus alias `p_openweather_api_key`), so pipeline Notebook activity values now override defaults as intended.
 - 2026-05-06: `pipeline_params.DEFAULT_PARAMS` and `02_silver_clean_soil.py` default `soil_csv_input_dir` to `Files/medallion/bronze/com_soil_sensor_readings`; split soil Bronze notebook may use `Files/raw/soil` in local `params.get` fallbacks—set **Fabric pipeline parameters** to match where CSVs/zips actually live.
 - 2026-05-07: Added **Azure DevOps** path: `azure-pipelines.yml` (offline `compileall` + JSON parse) and [docs/azure-devops-fabric-ci.md](../docs/azure-devops-fabric-ci.md); wired links from `README.md`, `docs/architecture.md`, `fabric/README.md`, and Power BI report §9.1. [fabric/pipeline_activity_checklist.md](../fabric/pipeline_activity_checklist.md): **serial Bronze** note for F2/trial; `soil_csv_input_dir` row aligned with flat-path file branch in current split soil Bronze.
+- 2026-05-08: **Stance:** Pause Fabric **medallion data pipeline deployment/runs** while capacity constrained; prioritized **next step** — wire **Azure DevOps** using `azure-pipelines.yml` ([docs/azure-devops-fabric-ci.md](../docs/azure-devops-fabric-ci.md)); updated `memory-bank/activeContext.md` TL;DR + *Next actions*.
 - 2026-04-29: Added direct Azure Key Vault secret retrieval path in `01_bronze_ingest_weather.py` using service principal credentials (`azure_tenant_id`, `azure_client_id`, `azure_client_secret`) plus vault/secret params, with automatic API enable when secret is loaded; updated `.env.example`/`pipeline_params.py` placeholders and removed accidentally embedded real key from `.env.example`.
 - 2026-04-29: Updated weather secret retrieval priority to prefer Fabric notebook utils (`mssparkutils/notebookutils` `credentials.getSecret`) via `key_vault_linked_service`/vault name/url, with service-principal REST as fallback; added `key_vault_linked_service` to params and `.env.example`.
 - 2026-04-29: Added direct Fabric connection-id secret retrieval support in `01_bronze_ingest_weather.py` (`notebookutils.credentials.getSecretWithConnection`) via new `key_vault_connection_id` param/env mapping, so notebook can use a known-working connection id without linked service name ambiguity.
@@ -69,6 +70,6 @@
 
 ## Next actions (human)
 
-1. Create lakehouse and tables in Fabric; run `sql/metadata_ddl.sql` (adapt to workspace).
-2. Import `fabric/pipeline_bronze.parameters.template.json` concepts into a real pipeline; wire notebook activities.
-3. Fill `notebooks/01_bronze_ingest.py` with real HTTP + write logic using pipeline parameters.
+1. **Azure DevOps (next step, no Fabric capacity needed):** create a pipeline from [`azure-pipelines.yml`](../azure-pipelines.yml); mirror repo to Azure Repos **or** use the **GitHub** service connection pointing at **this GitHub repo** — details in [docs/azure-devops-fabric-ci.md](../docs/azure-devops-fabric-ci.md); optional branch policy on `main`.
+2. **Deferred until capacity:** run medallion Fabric data pipeline (Bronze → … → ML) using [fabric/pipeline_activity_checklist.md](../fabric/pipeline_activity_checklist.md); keep activities **serial** on F2. Fabric **Deployment pipelines** optional for prod promotion.
+3. When resuming Fabric: lakehouse / `sql/metadata_ddl.sql` (adapt); wire split Bronze/Silver notebooks and parameters — already largely in-repo.

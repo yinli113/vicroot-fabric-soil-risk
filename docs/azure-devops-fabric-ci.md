@@ -14,6 +14,10 @@ Use **Azure DevOps Pipelines** with [`azure-pipelines.yml`](../azure-pipelines.y
 
 Full pipeline executes (Bronze → Silver → Gold → ML) remain **in Fabric** after capacity allows; see [fabric/pipeline_activity_checklist.md](../fabric/pipeline_activity_checklist.md).
 
+## Project stance — deployment paused, ADO next
+
+Medallion **data pipeline runs** in Fabric can be **deferred** when the workspace hits **Spark capacity limits** (`TooManyRequestsForCapacity`): that does **not** block **`azure-pipelines.yml`**. Treat **Azure DevOps** setup as the **next project step**: it validates commits and configs **offline** until you retry Fabric on adequate capacity (e.g. **sequential** notebook activities on F2).
+
 ## One-time setup (Azure DevOps)
 
 1. **Repo:** Push this repository to **Azure Repos** or use **Azure DevOps GitHub connection** with a service connection (your org’s trial rules apply).
