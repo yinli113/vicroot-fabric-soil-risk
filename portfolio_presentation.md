@@ -57,7 +57,3 @@
 * **Version Control & CI:** Managed codebase via Git/GitHub. Added Azure DevOps YAML CI (`azure-pipelines.yml`) for offline Python compilation checks and JSON template validation; secrets documented via env patterns only — never committed.
 * **Parameterization:** Driven entirely by configurable parameters (`pipeline_params.py`), avoiding hard-coded logic and enabling seamless dev-to-prod promotion.
 * **Documentation:** Maintained comprehensive data dictionaries, architecture design records, and dashboard interpretation guides for non-technical stakeholders.
-
----
-
-> **Note to Presenter:** These slides are designed to highlight your skills across **Data Engineering**, **Cloud Architecture (Microsoft Fabric)**, and **Data Analytics**. This combination is highly attractive for roles such as Data Engineer, Analytics Engineer, or BI Developer.
