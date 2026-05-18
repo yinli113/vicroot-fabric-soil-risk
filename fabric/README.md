@@ -2,6 +2,8 @@
 
 **CI (no Spark):** Azure DevOps can run [`azure-pipelines.yml`](../azure-pipelines.yml) for offline validation only — see [docs/azure-devops-fabric-ci.md](../docs/azure-devops-fabric-ci.md).
 
+**Split soil Bronze:** sync [`notebooks/lib/bronze_soil_ingest.py`](../notebooks/lib/bronze_soil_ingest.py) with `01_bronze_ingest_soil.py` (same `Files/notebooks/lib` path Fabric uses).
+
 1. Create pipeline parameters using `pipeline_bronze.parameters.template.json`.
 2. **End-to-end activity order:** see [`pipeline_activity_checklist.md`](pipeline_activity_checklist.md) (Bronze → Silver → Gold → optional ML).
 3. Add one Notebook activity that runs `notebooks/01_bronze_ingest.py` (`nb_vicroot_bronze_ingest`) — or use **split** Bronze notebooks per [`pipeline_activity_checklist.md`](pipeline_activity_checklist.md).

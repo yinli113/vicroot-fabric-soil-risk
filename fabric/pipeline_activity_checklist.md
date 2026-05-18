@@ -39,7 +39,7 @@ Define these at **pipeline** level; pass the same keys into **each** notebook ac
 
 | # | Suggested activity name | Repo notebook | Purpose |
 |---|-------------------------|---------------|---------|
-| A1 | `NB_Bronze_Soil` | `notebooks/01_bronze_ingest_soil.py` | Soil sensor zip/CSV/API → Bronze paths |
+| A1 | `NB_Bronze_Soil` | `notebooks/01_bronze_ingest_soil.py` | Soil sensor zip/CSV/API → Bronze paths; requires `notebooks/lib/bronze_soil_ingest.py` in the lakehouse |
 | A2 | `NB_Bronze_Site` | `notebooks/01_bronze_ingest_site.py` | Site reference → Bronze |
 | A3 | `NB_Bronze_Weather` | `notebooks/01_bronze_ingest_weather.py` | Weather file/API → Bronze |
 

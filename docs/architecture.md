@@ -15,7 +15,7 @@ Medallion pipeline on Microsoft Fabric (Bronze → Silver → Gold) with **param
 
 ### Split notebooks for scale (implemented)
 
-- Bronze soil: `notebooks/01_bronze_ingest_soil.py`
+- Bronze soil: `notebooks/01_bronze_ingest_soil.py` (orchestration) + `notebooks/lib/bronze_soil_ingest.py` (zip/CSV/API paths, CoM HTTP, Delta watermark append)
 - Bronze site: `notebooks/01_bronze_ingest_site.py`
 - Bronze weather: `notebooks/01_bronze_ingest_weather.py`
 - Silver soil: `notebooks/02_silver_clean_soil.py`
@@ -24,6 +24,11 @@ Medallion pipeline on Microsoft Fabric (Bronze → Silver → Gold) with **param
 - GeoJSON export helper: `notebooks/04_export_site_risk_geojson.py`
 
 These run independently so one domain can fail/retry without blocking others.
+
+### Bronze soil — module and watermarks
+
+- **Code split:** `01_bronze_ingest_soil.py` holds parameters and ingest branches (zip / yearly CSV / API). Shared file copy fallbacks, JSONL promotion, CoM `explore` pagination, and **`update_watermarks`** live in **`notebooks/lib/bronze_soil_ingest.py`** (deploy both files to the lakehouse `Files/notebooks/lib` tree).
+- **Watermarks:** On success, the notebook **appends** rows to `metadata.ingestion_watermarks` (default) with per-segment `dataset_name` (e.g. `bronze_soil_2023_file`). This is **run lineage / audit** (which slice completed on which `pipeline_run_id` + `snapshot_date`); **`high_watermark`** is a coarse `YYYY-12-31` label, **not** a cursor used today to drive incremental API loads (API years still full-year pulls; `records_api.jsonl` is replaced per year when that branch runs).
 
 ## Domain + layer layout (staged migration)
 
@@ -85,7 +90,7 @@ Use these as **pipeline parameters** in Fabric Data Factory; pass the same keys 
 | `source_crs` | string | `EPSG:4326` | Incoming tree coords |
 | `target_crs` | string | `EPSG:7855` | GDA2020 / MGA zone 55 local math |
 | `snapshot_date` | string | `2026-04-24` | Partition key for idempotent runs |
-| `pipeline_run_id` | string | `@pipeline().RunId` | Correlation id |
+| `pipeline_run_id` | string | `@pipeline().RunId` | Correlation id for watermarks; if blank (e.g. notebook-only run), soil Bronze sets `notebook-{snapshot_date}-{utcstamp}` via `effective_pipeline_run_id` |
 | `bronze_ingest_mode` | string | `zip_and_api` | Run `zip_only`, `api_only`, or both for soil sensor bronze |
 | `readings_years_csv` | string | `2022,2023,2024,2025` | Soil reading years to load into Silver/Gold; Bronze promotes 2022 from the uploaded zip and uses file/API branches for the other years |
 | `soil_zip_input_path` | string | `Files/Soil Sensor Readings - Historical data (2022).zip` | Uploaded 2022 archive path in Lakehouse Files |
@@ -255,7 +260,7 @@ For **Azure DevOps Pipelines** (PR-safe checks without Livy), see [azure-devops-
 
 ## Repo layout (reference)
 
-- `notebooks/` — PySpark scripts / notebook exports; use `notebooks/lib/pipeline_params.py` for params.
+- `notebooks/` — PySpark scripts / notebook exports; use `notebooks/lib/pipeline_params.py` for params; soil Bronze helpers in `notebooks/lib/bronze_soil_ingest.py`.
 - `fabric/` — pipeline notes and parameter templates for the Fabric portal.
 - `config/` — optional JSON for validation rules and thresholds.
 - `sql/` — DDL snippets for metadata tables.

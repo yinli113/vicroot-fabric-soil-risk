@@ -35,7 +35,7 @@ Technical truth tables and parameter defaults live under [`docs/`](docs/).
 ## Repository scope
 
 - Fabric-ready notebooks for Bronze / Silver / Gold (+ optional ML baseline)
-- Parameter-driven runtime via [`notebooks/lib/pipeline_params.py`](notebooks/lib/pipeline_params.py)
+- Parameter-driven runtime via [`notebooks/lib/pipeline_params.py`](notebooks/lib/pipeline_params.py); split **soil** Bronze IO/API helpers in [`notebooks/lib/bronze_soil_ingest.py`](notebooks/lib/bronze_soil_ingest.py) (sync with [`01_bronze_ingest_soil.py`](notebooks/01_bronze_ingest_soil.py) in Fabric)
 - Gold outputs for **moisture/temperature-led** monitoring, salinity context, and analyst-facing map visualization
 
 ## Documentation
